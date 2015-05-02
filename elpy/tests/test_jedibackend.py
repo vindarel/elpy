@@ -48,11 +48,33 @@ class TestRPCGetDocstring(RPCGetDocstringTests,
                           JediBackendTestCase):
     THREAD_JOIN_DOCSTRING = 'join(self, timeout = None)'
 
+    def check_docstring(self, docstring):
+        lines = docstring.splitlines()
+        self.assertEqual(lines[0], 'Documentation for threading.Thread.join:')
+        self.assertEqual(lines[2], self.THREAD_JOIN_DOCSTRING)
+
 
 class TestRPCGetDefinition(RPCGetDefinitionTests,
                            JediBackendTestCase):
-    pass
+    @mock.patch("jedi.Script")
+    def test_should_not_fail_if_module_path_is_none(self, Script):
+        """Do not fail if loc.module_path is None.
 
+        This can happen under some circumstances I am unsure about.
+        See #537 for the issue that reported this.
+
+        """
+        locations = [
+            mock.Mock(module_path=None)
+        ]
+        script = Script.return_value
+        script.goto_definitions.return_value = locations
+        script.goto_assignments.return_value = locations
+
+        location = self.rpc("", "", 0)
+
+        self.assertIsNone(location)
+        
 
 class TestRPCGetCalltip(RPCGetCalltipTests,
                         JediBackendTestCase):
