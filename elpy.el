@@ -4,7 +4,7 @@
 
 ;; Author: Jorgen Schaefer <contact@jorgenschaefer.de>
 ;; URL: https://github.com/jorgenschaefer/elpy
-;; Version: 1.8.1
+;; Version: 1.9.0
 ;; Keywords: Python, IDE, Languages, Tools
 ;; Package-Requires: ((company "0.8.2") (find-file-in-project "3.3")  (highlight-indentation "0.5.0") (pyvenv "1.3") (yasnippet "0.8.0"))
 
@@ -46,7 +46,7 @@
 (require 'elpy-refactor)
 (require 'pyvenv)
 
-(defconst elpy-version "1.8.1"
+(defconst elpy-version "1.9.0"
   "The version of the Elpy lisp code.")
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -295,6 +295,11 @@ edited instead. Setting this variable to nil disables this feature."
   :type '(repeat string)
   :group 'elpy)
 
+(defcustom elpy-rgrep-file-pattern "*.py"
+  "FILES to use for `elpy-rgrep-symbol'."
+  :type 'string
+  :group 'elpy)
+
 ;;;;;;;;;;;;;
 ;;; Elpy Mode
 
@@ -309,24 +314,27 @@ edited instead. Setting this variable to nil disables this feature."
     ;; (define-key map (kbd "C-M-x")   'python-shell-send-defun)
     ;; (define-key map (kbd "C-c <")   'python-indent-shift-left)
     ;; (define-key map (kbd "C-c >")   'python-indent-shift-right)
+    (define-key map (kbd "C-c RET") 'elpy-importmagic-add-import)
+    (define-key map (kbd "C-c C-b") 'elpy-nav-expand-to-indentation)
     (define-key map (kbd "C-c C-c") 'elpy-shell-send-region-or-buffer)
-    (define-key map (kbd "C-c C-z") 'elpy-shell-switch-to-shell)
     (define-key map (kbd "C-c C-d") 'elpy-doc)
     (define-key map (kbd "C-c C-e") 'elpy-multiedit-python-symbol-at-point)
     (define-key map (kbd "C-c C-f") 'elpy-find-file)
-    (define-key map (kbd "C-c RET") 'elpy-importmagic-add-import)
-    (define-key map (kbd "C-c <S-return>") 'elpy-importmagic-fixup)
     (define-key map (kbd "C-c C-n") 'elpy-flymake-next-error)
     (define-key map (kbd "C-c C-o") 'elpy-occur-definitions)
     (define-key map (kbd "C-c C-p") 'elpy-flymake-previous-error)
-    (define-key map (kbd "C-c C-r") 'elpy-refactor)
     (define-key map (kbd "C-c C-s") 'elpy-rgrep-symbol)
     (define-key map (kbd "C-c C-t") 'elpy-test)
     (define-key map (kbd "C-c C-v") 'elpy-check)
-    ;; (define-key map (kbd "C-c C-z") 'python-shell-switch-to-shell)
+    (define-key map (kbd "C-c C-z") 'elpy-shell-switch-to-shell)
+    (define-key map (kbd "C-c C-r i") 'elpy-importmagic-fixup)
+    (define-key map (kbd "C-c C-r p") 'elpy-autopep8-fix-code)
+    (define-key map (kbd "C-c C-r r") 'elpy-refactor)
 
     (define-key map (kbd "<S-return>") 'elpy-open-and-indent-line-below)
     (define-key map (kbd "<C-S-return>") 'elpy-open-and-indent-line-above)
+
+    (define-key map (kbd "<C-return>") 'elpy-shell-send-current-statement)
 
     (define-key map (kbd "<C-down>") 'elpy-nav-forward-block)
     (define-key map (kbd "<C-up>") 'elpy-nav-backward-block)
@@ -335,8 +343,8 @@ edited instead. Setting this variable to nil disables this feature."
 
     (define-key map (kbd "<M-down>") 'elpy-nav-move-line-or-region-down)
     (define-key map (kbd "<M-up>") 'elpy-nav-move-line-or-region-up)
-    (define-key map (kbd "<M-left>") 'elpy-nav-move-region-or-line-left)
-    (define-key map (kbd "<M-right>") 'elpy-nav-move-region-or-line-right)
+    (define-key map (kbd "<M-left>") 'python-indent-shift-left)
+    (define-key map (kbd "<M-right>") 'python-indent-shift-right)
 
     (define-key map (kbd "M-.")     'elpy-goto-definition)
     (define-key map (kbd "M-TAB")   'elpy-company-backend)
@@ -389,10 +397,10 @@ edited instead. Setting this variable to nil disables this feature."
      ["Previous Error" elpy-flymake-previous-error
       :help "Go to the previous inline error, if any"])
     ("Indentation Blocks"
-     ["Dedent" elpy-nav-move-region-or-line-left
+     ["Dedent" python-indent-shift-left
       :help "Dedent current block or region"
       :suffix (if (use-region-p) "Region" "Block")]
-     ["Indent" elpy-nav-move-region-or-line-right
+     ["Indent" python-indent-shift-right
       :help "Indent current block or region"
       :suffix (if (use-region-p) "Region" "Block")]
      ["Up" elpy-nav-move-line-or-region-up
@@ -422,6 +430,7 @@ edited instead. Setting this variable to nil disables this feature."
                      "Elpy only works with python.el from "
                      "Emacs 24 and above"))))
   (elpy-modules-global-init)
+  (define-key inferior-python-mode-map (kbd "C-c C-z") 'elpy-shell-switch-to-buffer)
   (add-hook 'python-mode-hook 'elpy-mode))
 
 (defun elpy-disable ()
@@ -441,7 +450,7 @@ virtualenv.
 
 \\{elpy-mode-map}"
   :lighter " Elpy"
-  (when (not (eq major-mode 'python-mode))
+  (when (not (derived-mode-p 'python-mode))
     (error "Elpy only works with `python-mode'"))
   (cond
    (elpy-mode
@@ -545,6 +554,14 @@ try:
 except:
     config['importmagic_version'] = None
     config['importmagic_latest'] = latest('importmagic')
+
+try:
+    import autopep8
+    config['autopep8_version'] = autopep8.__version__
+    config['autopep8_latest'] = latest('autopep8', config['autopep8_version'])
+except:
+    config['autopep8_version'] = None
+    config['autopep8_latest'] = latest('autopep8')
 
 json.dump(config, sys.stdout)
 ")
@@ -779,8 +796,28 @@ item in another window.\n\n")
                      :package "importmagic" :upgrade t)
       (insert "\n\n"))
 
+    ;; No autopep8 available
+    (when (not (gethash "autopep8_version" config))
+      (elpy-insert--para
+       "The autopep8 package is not available. Commands using this will "
+       "not work.\n")
+      (insert "\n")
+      (widget-create 'elpy-insert--pip-button
+                     :package "autopep8")
+      (insert "\n\n"))
+
+    ;; Newer version of autopep8 available
+    (when (and (gethash "autopep8_version" config)
+               (gethash "autopep8_latest" config))
+      (elpy-insert--para
+       "There is a newer version of the autopep8 package available.\n")
+      (insert "\n")
+      (widget-create 'elpy-insert--pip-button
+                     :package "autopep8" :upgrade t)
+      (insert "\n\n"))
+
     ;; flake8, the default syntax checker, not found
-    (when (not (executable-find "flake8"))
+    (when (not (executable-find python-check-command))
       (elpy-insert--para
        "The configured syntax checker could not be found. Elpy uses this "
        "program to provide syntax checks of your programs, so you might "
@@ -867,6 +904,8 @@ virtual_env_short"
         (rope-latest (gethash "rope_latest" config))
         (importmagic-version (gethash "importmagic_version" config))
         (importmagic-latest (gethash "importmagic_latest" config))
+        (autopep8-version (gethash "importmagic_version" config))
+        (autopep8-latest (gethash "importmagic_latest" config))
         (virtual-env (gethash "virtual_env" config))
         (virtual-env-short (gethash "virtual_env_short" config))
         table maxwidth)
@@ -918,6 +957,9 @@ virtual_env_short"
             ("Importmagic" . ,(elpy-config--package-link "importmagic"
                                                          importmagic-version
                                                          importmagic-latest))
+            ("Autopep8" . ,(elpy-config--package-link "autopep8"
+                                                         autopep8-version
+                                                         autopep8-latest))
             ("Syntax checker" . ,(let ((syntax-checker
                                         (executable-find
                                          python-check-command)))
@@ -1178,7 +1220,7 @@ for."
   (let ((grep-find-ignored-directories (append elpy-project-ignored-directories
                                                grep-find-ignored-directories)))
     (rgrep regexp
-           "*.py"
+           elpy-rgrep-file-pattern
            (or (elpy-project-root)
                default-directory)))
   (with-current-buffer next-error-last-buffer
@@ -1415,6 +1457,12 @@ else:
    (t
     (error "I don't know how to set ipython settings for this Emacs"))))
 
+(defun elpy-shell-display-buffer ()
+  "Display inferior Python process buffer."
+  (display-buffer (process-buffer (elpy-shell-get-or-create-process))
+                  nil
+                  'visible))
+
 (defun elpy-shell-send-region-or-buffer (&optional arg)
   "Send the active region or the buffer to the Python shell.
 
@@ -1441,17 +1489,30 @@ code is executed."
         (goto-char (point-min))
         (setq has-if-main (re-search-forward if-main-regex nil t)))
       (python-shell-send-buffer arg))
-    (display-buffer (process-buffer (elpy-shell-get-or-create-process))
-                    nil
-                    'visible)
+    (elpy-shell-display-buffer)
     (when has-if-main
       (message (concat "Removed if __main__ == '__main__' construct, "
                        "use a prefix argument to evaluate.")))))
+
+(defun elpy-shell-send-current-statement ()
+  "Send current statement to Python shell."
+  (interactive)
+  (let ((beg (python-nav-beginning-of-statement))
+        (end (python-nav-end-of-statement)))
+    (elpy-shell-get-or-create-process)
+    (python-shell-send-string (buffer-substring beg end)))
+  (elpy-shell-display-buffer)
+  (python-nav-forward-statement))
 
 (defun elpy-shell-switch-to-shell ()
   "Switch to inferior Python process buffer."
   (interactive)
   (pop-to-buffer (process-buffer (elpy-shell-get-or-create-process))))
+
+(defun elpy-shell-switch-to-buffer ()
+  "Switch from inferior Python process buffer to recent Python buffer."
+  (interactive)
+  (pop-to-buffer (other-buffer (current-buffer) 1)))
 
 (defun elpy-shell-get-or-create-process ()
   "Get or create an inferior Python process for current buffer and return it."
@@ -1467,7 +1528,8 @@ code is executed."
   (if (= beg end)
       ""
     (let ((region (buffer-substring beg end))
-          (indent-level nil))
+          (indent-level nil)
+          (indent-tabs-mode nil))
       (with-temp-buffer
         (insert region)
         (goto-char (point-min))
@@ -1653,53 +1715,6 @@ indentation levels."
                     (length region))))
     (setq deactivate-mark nil)))
 
-(defun elpy-nav-move-region-or-line-left ()
-  "Dedent the current indentation block, or the active region."
-  (interactive)
-  (if (use-region-p)
-      (elpy--nav-move-region-left)
-    (elpy--nav-move-line-left)))
-
-(defun elpy-nav-move-region-or-line-right ()
-  "Indent the current indentation block, or the active region."
-  (interactive)
-  (if (use-region-p)
-      (elpy--nav-move-region-right)
-    (elpy--nav-move-line-right )))
-
-(defun elpy--nav-move-line-left ()
-  (save-excursion
-    (goto-char (point-at-bol))
-    (when (looking-at (format "^ \\{%i\\}" python-indent))
-      (replace-match ""))))
-
-(defun elpy--nav-move-line-right ()
-  (save-excursion
-    (goto-char (point-at-bol))
-    (insert (make-string python-indent ?\s))))
-
-(defun elpy--nav-move-region-left ()
-  (save-excursion
-    (let ((beg (region-beginning))
-          (end (region-end)))
-      (goto-char beg)
-      (goto-char (point-at-bol))
-      (while (< (point) end)
-        (elpy--nav-move-line-left)
-        (forward-line 1)))
-    (setq deactivate-mark nil)))
-
-(defun elpy--nav-move-region-right ()
-  (save-excursion
-    (let ((beg (region-beginning))
-          (end (region-end)))
-      (goto-char beg)
-      (goto-char (point-at-bol))
-      (while (< (point) end)
-        (elpy--nav-move-line-right)
-        (forward-line 1)))
-    (setq deactivate-mark nil)))
-
 (defun elpy-open-and-indent-line-below ()
   "Open a line below the current one, move there, and indent."
   (interactive)
@@ -1713,6 +1728,18 @@ indentation levels."
   (save-excursion
     (insert "\n"))
   (indent-according-to-mode))
+
+(defun elpy-nav-expand-to-indentation ()
+  "Select surrounding lines with current indentation."
+  (interactive)
+  (let ((indentation (current-indentation)))
+    (while (<= indentation (current-indentation))
+      (forward-line -1))
+    (forward-line 1)
+    (push-mark (point) nil t)
+    (while (<= indentation (current-indentation))
+      (forward-line 1))
+    (backward-char)))
 
 ;;;;;;;;;;;;;;;;
 ;;; Test running
@@ -1977,10 +2004,10 @@ prefix argument is given, prompt for a symbol from the user."
         nil))))
 
 ;;;;;;;;;;;;;;
-;;; Import manipulation
+;;; Buffer manipulation
 
-(defun elpy-importmagic--replace-block (spec)
-  "Replace an imports block. SPEC is (startline endline newblock)."
+(defun elpy-buffer--replace-block (spec)
+  "Replace a block.  SPEC is (startline endline newblock)."
   (let ((start-line (nth 0 spec))
         (end-line (nth 1 spec))
         (new-block (nth 2 spec)))
@@ -1995,6 +2022,18 @@ prefix argument is given, prompt for a symbol from the user."
           (unless (string-equal (buffer-substring beg end) new-block)
             (delete-region beg end)
             (insert new-block)))))))
+
+(defun elpy-buffer--replace-region (beg end rep)
+  "Replace text in BUFFER in region (BEG END) with REP."
+  (unless (string-equal (buffer-substring beg end) rep)
+    (save-excursion
+      (goto-char end)
+      (insert rep)
+      (delete-region beg end))))
+
+
+;;;;;;;;;;;;;;
+;;; Import manipulation
 
 (defun elpy-importmagic--add-import-read-args (&optional object prompt)
   (let* ((default-object (save-excursion
@@ -2026,7 +2065,7 @@ prefix argument is given, prompt for a symbol from the user."
     (let* ((res (elpy-rpc "add_import" (list buffer-file-name
                                              (elpy-rpc--buffer-contents)
                                              statement))))
-      (elpy-importmagic--replace-block res))))
+      (elpy-buffer--replace-block res))))
 
 (defun elpy-importmagic-fixup ()
   "Query for new imports of unresolved symbols, and remove unreferenced imports.
@@ -2046,7 +2085,7 @@ Also sort the imports in the import statement blocks."
   (let* ((res (elpy-rpc "remove_unreferenced_imports" (list buffer-file-name
                                                             (elpy-rpc--buffer-contents)))))
     (unless (stringp res)
-      (elpy-importmagic--replace-block res))))
+      (elpy-buffer--replace-block res))))
 
 ;;;;;;;;;;;;;;
 ;;; Multi-Edit
@@ -2804,6 +2843,11 @@ protocol if the buffer is larger than
       `((filename . ,file-name)
         (delete_after_use . t)))))
 
+(defun elpy-rpc--region-contents ()
+  "Return the selected region as a string."
+  (if (use-region-p)
+      (buffer-substring (region-beginning) (region-end))))
+
 ;; RPC API functions
 
 (defun elpy-rpc-restart ()
@@ -3340,6 +3384,20 @@ description."
     (`buffer-stop
      (yas-minor-mode -1))))
 
+;;;;;;;;;;;;;;;;;;
+;;; Module: autopep8
+
+(defun elpy-autopep8-fix-code ()
+  "Automatically formats Python code to conform to the PEP 8 style guide."
+  (interactive)
+  (if (use-region-p)
+    (let ((new-block (elpy-rpc "fix_code" (list (elpy-rpc--region-contents))))
+          (beg (region-beginning)) (end (region-end)))
+      (elpy-buffer--replace-region beg end new-block))
+    (let ((new-block (elpy-rpc "fix_code" (list (elpy-rpc--buffer-contents))))
+          (beg (point-min)) (end (point-max)))
+      (elpy-buffer--replace-region beg end new-block))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Backwards compatibility
 
@@ -3444,6 +3502,7 @@ which we're looking."
      ((and (<= on-or-off 0)
            highlight-indent-active)
       (highlight-indentation)))))
+
 
 (provide 'elpy)
 ;;; elpy.el ends here
