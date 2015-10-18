@@ -24,7 +24,7 @@
   (elpy-testcase ((:project project-root
                             "test.py"))
     (find-file (f-join project-root "test.py"))
-    (message "Buffer: %S" (buffer-file-name))
+    (message "Buffer: %S" buffer-file-name)
     (elpy-module-flymake 'buffer-init)
 
     (should flymake-mode)
