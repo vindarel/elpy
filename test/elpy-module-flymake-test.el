@@ -23,11 +23,9 @@
 (ert-deftest elpy-module-flymake-buffer-init ()
   (elpy-testcase ((:project project-root
                             "test.py"))
-    (message "Buffer1: %S" (current-buffer))
     (find-file (f-join project-root "test.py"))
-    (message "Buffer2: %S" (current-buffer))
+    (message "Buffer: %S" (buffer-file-name))
     (elpy-module-flymake 'buffer-init)
-    (message "Buffer3: %S" (current-buffer))
 
     (should flymake-mode)
 
