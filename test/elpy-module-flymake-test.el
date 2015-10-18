@@ -27,6 +27,8 @@
     (message "Buffer: %S" buffer-file-name)
     (elpy-module-flymake 'buffer-init)
 
+    (flymake-mode 1)
+
     (should flymake-mode)
 
     (should (equal flymake-no-changes-timeout 60))
