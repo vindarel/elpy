@@ -11,7 +11,7 @@ import pydoc
 
 from elpy.pydocutils import get_pydoc_completions
 from elpy.rpc import JSONRPCServer, Fault
-from elpy.impmagic import ImportMagic
+from elpy.impmagic import ImportMagic, ImportMagicError
 from elpy.auto_pep8 import fix_code
 
 
@@ -209,7 +209,10 @@ class ElpyRPCServer(JSONRPCServer):
 
         """
         self._ensure_import_magic()
-        return self.import_magic.get_import_symbols(symbol)
+        try:
+            return self.import_magic.get_import_symbols(symbol)
+        except ImportMagicError as err:
+            raise Fault(str(err), code=200)
 
     def rpc_add_import(self, filename, source, statement):
         """Add an import statement to the module.
@@ -217,7 +220,10 @@ class ElpyRPCServer(JSONRPCServer):
         """
         self._ensure_import_magic()
         source = get_source(source)
-        return self.import_magic.add_import(source, statement)
+        try:
+            return self.import_magic.add_import(source, statement)
+        except ImportMagicError as err:
+            raise Fault(str(err), code=200)
 
     def rpc_get_unresolved_symbols(self, filename, source):
         """Return a list of unreferenced symbols in the module.
@@ -225,7 +231,10 @@ class ElpyRPCServer(JSONRPCServer):
         """
         self._ensure_import_magic()
         source = get_source(source)
-        return self.import_magic.get_unresolved_symbols(source)
+        try:
+            return self.import_magic.get_unresolved_symbols(source)
+        except ImportMagicError as err:
+            raise Fault(str(err), code=200)
 
     def rpc_remove_unreferenced_imports(self, filename, source):
         """Remove unused import statements.
@@ -233,7 +242,10 @@ class ElpyRPCServer(JSONRPCServer):
         """
         self._ensure_import_magic()
         source = get_source(source)
-        return self.import_magic.remove_unreferenced_imports(source)
+        try:
+            return self.import_magic.remove_unreferenced_imports(source)
+        except ImportMagicError as err:
+            raise Fault(str(err), code=200)
 
     def rpc_fix_code(self, source):
         """Formats Python code to conform to the PEP 8 style guide.
@@ -258,7 +270,8 @@ def get_source(fileobj):
         return fileobj
     else:
         try:
-            with io.open(fileobj["filename"], encoding="utf-8") as f:
+            with io.open(fileobj["filename"], encoding="utf-8",
+                         errors="ignore") as f:
                 return f.read()
         finally:
             if fileobj.get('delete_after_use'):

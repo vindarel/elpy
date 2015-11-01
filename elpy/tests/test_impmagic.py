@@ -3,6 +3,7 @@
 """Tests for the elpy.impmagic module"""
 
 import re
+import sys
 import unittest
 
 from elpy import impmagic
@@ -18,8 +19,8 @@ time.sleep(1)
 '''
 
 
+@unittest.skipIf(sys.version_info >= (3, 5), "importmagic fails in 3.5")
 class ImportMagicTestCase(BackendTestCase):
-
     def setUp(self):
         if not impmagic.importmagic:
             raise unittest.SkipTest
@@ -40,8 +41,6 @@ class ImportMagicTestCase(BackendTestCase):
         candidates = self.importmagic.get_import_symbols('mymod')
         self.assertEqual(candidates, ['import mymod'])
 
-    @unittest.skipIf(impmagic.importmagic.__version__ == '0.1.3',
-                     "Import ordering is random, see #479")
     def test_add_import(self):
         self.build_index()
         start, end, newblock = self.importmagic.add_import(
@@ -49,7 +48,10 @@ class ImportMagicTestCase(BackendTestCase):
         self.assertEqual(start, 2)
         self.assertEqual(end, 5)
         self.assertEqual(newblock.strip(),
-                         'import logging\nimport time\n\nfrom mymod import AnUncommonName')
+                         'import logging\n'
+                         'import time\n'
+                         '\n'
+                         'from mymod import AnUncommonName')
 
         start, end, newblock = self.importmagic.add_import(
             TEST_SOURCE, 'import mymod')

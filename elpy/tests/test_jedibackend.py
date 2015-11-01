@@ -1,5 +1,6 @@
 """Tests for the elpy.jedibackend module."""
 
+import sys
 import unittest
 
 import jedi
@@ -79,15 +80,19 @@ class TestRPCGetDefinition(RPCGetDefinitionTests,
         self.assertIsNone(location)
 
 
-@unittest.skip("Broken in Jedi 0.9.0")
 class TestRPCGetCalltip(RPCGetCalltipTests,
                         JediBackendTestCase):
     KEYS_CALLTIP = {'index': 0,
                     'params': [''],
                     'name': u'keys'}
-    RADIX_CALLTIP = {'index': None,
-                     'params': [],
-                     'name': u'radix'}
+    if sys.version_info >= (3, 5):
+        RADIX_CALLTIP = {'index': 0,
+                         'params': ['10'],
+                         'name': u'radix'}
+    else:
+        RADIX_CALLTIP = {'index': None,
+                         'params': [],
+                         'name': u'radix'}
     ADD_CALLTIP = {'index': 0,
                    'params': [u'a', u'b'],
                    'name': u'add'}
@@ -109,6 +114,19 @@ class TestRPCGetCalltip(RPCGetCalltipTests,
                                      "kwargs=None",
                                      "verbose=None"],
                           "index": 0}
+
+    def test_should_not_fail_with_get_subscope_by_name(self):
+        # Bug #677 / jedi#628
+        source = (
+            u"my_lambda = lambda x: x+1\n"
+            u"my_lambda(1)"
+        )
+        filename = self.project_file("project.py", source)
+        offset = 37
+
+        sigs = self.backend.rpc_get_calltip(filename, source, offset)
+        if sigs is not None:
+            sigs[0].index
 
 
 class TestRPCGetUsages(RPCGetUsagesTests,

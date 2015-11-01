@@ -14,6 +14,7 @@ discovery would find them there and try to run them, which would fail.
 
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 
@@ -118,7 +119,8 @@ class GenericRPCTests(object):
 
         self.rpc(filename, source, offset)
 
-    @unittest.skip("bug in jedi 0.9.0")
+    @unittest.skipIf((3, 3) <= sys.version_info < (3, 4),
+                     "Bug in jedi for Python 3.3")
     def test_should_not_fail_for_relative_import(self):
         # Bug in Rope: rope#81 and rope#82
         source, offset = source_and_offset(
@@ -213,7 +215,6 @@ x._|_
 
         self.rpc(filename, source, offset)
 
-    @unittest.skip("Broken in Jedi 0.9.0")
     def test_should_not_fail_on_lambda(self):
         # Bug #272 / jedi#431, jedi#572
         source, offset = source_and_offset(
@@ -305,6 +306,31 @@ requests.get(u"https://web.archive.org/save/{}".format(url))
 
         self.rpc(filename, source, offset)
 
+    def test_should_not_fail_for_badly_defined_global_variable(self):
+        # Bug #519 / jedi#610
+        source, offset = source_and_offset(
+            """\
+def funct1():
+    global global_dict_var
+    global_dict_var = dict()
+
+def funct2():
+    global global_dict_var
+    q = global_dict_var.copy_|_()
+    print(q)""")
+        filename = self.project_file("project.py", source)
+
+        self.rpc(filename, source, offset)
+
+    def test_should_not_fail_with_mergednamesdict(self):
+        # Bug #563 / jedi#589
+        source, offset = source_and_offset(
+            u'from email import message_|_'
+        )
+        filename = self.project_file("project.py", source)
+
+        self.rpc(filename, source, offset)
+
 
 class RPCGetCompletionsTests(GenericRPCTests):
     METHOD = "rpc_get_completions"
@@ -320,6 +346,11 @@ class RPCGetCompletionsTests(GenericRPCTests):
         for candidate in expected:
             self.assertIn(candidate, actual)
 
+    if sys.version_info >= (3, 5):
+        JSON_COMPLETIONS = ["SONDecoder", "SONEncoder", "SONDecodeError"]
+    else:
+        JSON_COMPLETIONS = ["SONDecoder", "SONEncoder"]
+
     def test_should_complete_imports(self):
         source, offset = source_and_offset("import json\n"
                                            "json.J_|_")
@@ -329,7 +360,7 @@ class RPCGetCompletionsTests(GenericRPCTests):
                                                        offset)
         self.assertEqual(
             sorted([cand['suffix'] for cand in completions]),
-            sorted(["SONDecoder", "SONEncoder"]))
+            sorted(self.JSON_COMPLETIONS))
 
     def test_should_complete_top_level_modules_for_import(self):
         source, offset = source_and_offset("import multi_|_")
@@ -345,13 +376,13 @@ class RPCGetCompletionsTests(GenericRPCTests):
                          sorted(expected))
 
     def test_should_complete_packages_for_import(self):
-        source, offset = source_and_offset("import elpy.tes_|_")
+        source, offset = source_and_offset("import email.mi_|_")
         filename = self.project_file("test.py", source)
         completions = self.backend.rpc_get_completions(filename,
                                                        source,
                                                        offset)
         self.assertEqual([cand['suffix'] for cand in completions],
-                         ["ts"])
+                         ["me"])
 
     def test_should_not_complete_for_import(self):
         source, offset = source_and_offset("import foo.Conf_|_")
@@ -362,7 +393,8 @@ class RPCGetCompletionsTests(GenericRPCTests):
         self.assertEqual([cand['suffix'] for cand in completions],
                          [])
 
-    @unittest.skip("Jedi 0.9.0 bug")
+    @unittest.skipIf((3, 3) <= sys.version_info < (3, 4),
+                     "Bug in jedi for Python 3.3")
     def test_should_not_fail_for_short_module(self):
         source, offset = source_and_offset("from .. import foo_|_")
         filename = self.project_file("test.py", source)
@@ -414,18 +446,18 @@ class RPCGetCompletionsTests(GenericRPCTests):
 class RPCGetCompletionDocstringTests(object):
     def test_should_return_docstring(self):
         source, offset = source_and_offset("import json\n"
-                                           "json.J_|_")
+                                           "json.JSONEnc_|_")
         filename = self.project_file("test.py", source)
         completions = self.backend.rpc_get_completions(filename,
                                                        source,
                                                        offset)
         completions.sort(key=lambda p: p["name"])
         prop = completions[0]
-        self.assertEqual(prop["name"], "JSONDecoder")
+        self.assertEqual(prop["name"], "JSONEncoder")
 
-        docs = self.backend.rpc_get_completion_docstring("JSONDecoder")
+        docs = self.backend.rpc_get_completion_docstring("JSONEncoder")
 
-        self.assertIn("Simple JSON", docs)
+        self.assertIn("Extensible JSON", docs)
 
     def test_should_return_none_if_unknown(self):
         docs = self.backend.rpc_get_completion_docstring("Foo")
@@ -566,6 +598,8 @@ class RPCGetDefinitionTests(GenericRPCTests):
 class RPCGetCalltipTests(GenericRPCTests):
     METHOD = "rpc_get_calltip"
 
+    @unittest.skipIf(sys.version_info >= (3, 0),
+                     "Bug in Jedi 0.9.0")
     def test_should_get_calltip(self):
         source, offset = source_and_offset(
             "import threading\nthreading.Thread(_|_")
@@ -578,6 +612,8 @@ class RPCGetCalltipTests(GenericRPCTests):
 
         self.assertEqual(calltip, expected)
 
+    @unittest.skipIf(sys.version_info >= (3, 0),
+                     "Bug in Jedi 0.9.0")
     def test_should_get_calltip_even_after_parens(self):
         source, offset = source_and_offset(
             "import threading\nthreading.Thread(foo()_|_")
@@ -589,6 +625,8 @@ class RPCGetCalltipTests(GenericRPCTests):
 
         self.assertEqual(self.THREAD_CALLTIP, actual)
 
+    @unittest.skipIf(sys.version_info >= (3, 0),
+                     "Bug in Jedi 0.9.0")
     def test_should_get_calltip_at_closing_paren(self):
         source, offset = source_and_offset(
             "import threading\nthreading.Thread(_|_)")
@@ -599,6 +637,14 @@ class RPCGetCalltipTests(GenericRPCTests):
                                               offset)
 
         self.assertEqual(self.THREAD_CALLTIP, actual)
+
+    def test_should_not_missing_attribute_get_definition(self):
+        # Bug #627 / jedi#573
+        source, offset = source_and_offset(
+            "import threading\nthreading.Thread(_|_)")
+        filename = self.project_file("test.py", source)
+
+        self.backend.rpc_get_calltip(filename, source, offset)
 
     def test_should_return_none_for_bad_identifier(self):
         source, offset = source_and_offset(

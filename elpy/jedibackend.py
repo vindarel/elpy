@@ -38,8 +38,8 @@ class JediBackend(object):
             return []
         self.completions = dict((proposal.name, proposal)
                                 for proposal in proposals)
-        return [{'name': proposal.name,
-                 'suffix': proposal.complete,
+        return [{'name': proposal.name.rstrip("="),
+                 'suffix': proposal.complete.rstrip("="),
                  'annotation': proposal.type,
                  'meta': proposal.description}
                 for proposal in proposals]
@@ -125,6 +125,17 @@ class JediBackend(object):
             call = None
         if not call:
             return None
+        try:
+            call.index
+        except AttributeError as e:
+            if "get_definition" in str(e):
+                # Bug #627 / jedi#573
+                return None
+            elif "get_subscope_by_name" in str(e):
+                # Bug #677 / jedi#628
+                return None
+            else:
+                raise
         return {"name": call.name,
                 "index": call.index,
                 "params": [param.description for param in call.params]}
@@ -285,6 +296,30 @@ def run_with_debug(jedi, name, *args, **kwargs):
             return None
         # Bug #561, #564, #570, #588, #593, #599 / jedi#572, jedi#579, jedi#590
         if isinstance(e, KeyError):
+            return None
+        # Bug #519 / jedi#610
+        if (
+                isinstance(e, RuntimeError) and
+                "maximum recursion depth exceeded" in str(e)
+        ):
+            return None
+        # Bug #563 / jedi#589
+        if (
+                isinstance(e, AttributeError) and
+                "MergedNamesDict" in str(e)
+        ):
+            return None
+        # Bug #615 / jedi#592
+        if (
+                isinstance(e, AttributeError) and
+                "ListComprehension" in str(e)
+        ):
+            return None
+        # Bug #569 / jedi#593
+        if (
+                isinstance(e, AttributeError) and
+                "names_dict" in str(e)
+        ):
             return None
 
         from jedi import debug

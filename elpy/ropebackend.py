@@ -15,6 +15,7 @@ import rope.base.project
 import rope.base.libutils
 import rope.base.exceptions
 import rope.contrib.findit
+from rope.base.exceptions import RopeError
 
 from elpy import rpc
 import elpy.pydocutils
@@ -97,11 +98,7 @@ class RopeBackend(object):
                                  resource,
                                  maxfixes=MAXFIXES,
                                  **kwargs)
-        except (rope.base.exceptions.BadIdentifierError,
-                rope.base.exceptions.ModuleSyntaxError,
-                rope.base.exceptions.RefactoringError,
-                rope.base.exceptions.ResourceNotFoundError,
-                rope.base.exceptions.NameNotFoundError,
+        except (RopeError,
                 IndentationError,
                 LookupError,
                 AttributeError):
@@ -148,9 +145,9 @@ class RopeBackend(object):
                 AttributeError):
             return []
         prefixlen = offset - starting_offset
-        self.completions = dict((proposal.name, proposal)
-                                for proposal in proposals)
         try:
+            self.completions = dict((proposal.name, proposal)
+                                    for proposal in proposals)
             return [{'name': proposal.name,
                      'suffix': proposal.name[prefixlen:],
                      'annotation': proposal.type,
@@ -158,6 +155,9 @@ class RopeBackend(object):
                     for proposal in proposals]
         except rope.base.exceptions.ModuleSyntaxError:
             # Bug#406
+            return []
+        except AttributeError:
+            # Bug#699
             return []
 
     def rpc_get_completion_docstring(self, completion):

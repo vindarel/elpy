@@ -4,7 +4,7 @@
 
 ;; Author: Jorgen Schaefer <contact@jorgenschaefer.de>
 ;; URL: https://github.com/jorgenschaefer/elpy
-;; Version: 1.9.0
+;; Version: 1.10.0
 ;; Keywords: Python, IDE, Languages, Tools
 ;; Package-Requires: ((company "0.8.2") (find-file-in-project "3.3")  (highlight-indentation "0.5.0") (pyvenv "1.3") (yasnippet "0.8.0"))
 
@@ -46,7 +46,7 @@
 (require 'elpy-refactor)
 (require 'pyvenv)
 
-(defconst elpy-version "1.9.0"
+(defconst elpy-version "1.10.0"
   "The version of the Elpy lisp code.")
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -142,6 +142,15 @@ These will be checked in turn. The first directory found is used."
                      elpy-project-find-hg-root)
               (const :tag "Subversion project root (.svn)"
                      elpy-project-find-svn-root))
+  :group 'elpy)
+
+(defcustom elpy-company-hide-modeline t
+  "Non-nil if Elpy should remove company-mode's mode line display.
+
+Company shows the current backend there. For Elpy, this is mostly
+uninteresting information, but if you use company in other modes,
+you might want to keep it."
+  :type 'boolean
   :group 'elpy)
 
 (defcustom elpy-rpc-backend nil
@@ -343,8 +352,8 @@ edited instead. Setting this variable to nil disables this feature."
 
     (define-key map (kbd "<M-down>") 'elpy-nav-move-line-or-region-down)
     (define-key map (kbd "<M-up>") 'elpy-nav-move-line-or-region-up)
-    (define-key map (kbd "<M-left>") 'python-indent-shift-left)
-    (define-key map (kbd "<M-right>") 'python-indent-shift-right)
+    (define-key map (kbd "<M-left>") 'elpy-nav-indent-shift-left)
+    (define-key map (kbd "<M-right>") 'elpy-nav-indent-shift-right)
 
     (define-key map (kbd "M-.")     'elpy-goto-definition)
     (define-key map (kbd "M-TAB")   'elpy-company-backend)
@@ -431,7 +440,8 @@ edited instead. Setting this variable to nil disables this feature."
                      "Emacs 24 and above"))))
   (elpy-modules-global-init)
   (define-key inferior-python-mode-map (kbd "C-c C-z") 'elpy-shell-switch-to-buffer)
-  (add-hook 'python-mode-hook 'elpy-mode))
+  (add-hook 'python-mode-hook 'elpy-mode)
+  (add-hook 'pyvenv-post-activate-hooks 'elpy-rpc--disconnect))
 
 (defun elpy-disable ()
   "Disable Elpy in all future Python buffers."
@@ -683,11 +693,11 @@ item in another window.\n\n")
                         (member (expand-file-name "~/.local/bin/")
                                 exec-path))))
       (elpy-insert--para
-       "The directory ~/.local/bin/ is not in your PATH, even though you "
-       "do not have an active virtualenv. Installing Python packages "
-       "locally will create executables in that directory, so Emacs "
-       "won't find them. If you are missing some commands, do add this "
-       "directory to your PATH.\n\n"))
+       "The directory ~/.local/bin/ is not in your PATH. As there is "
+       "no active virtualenv, installing Python packages locally will "
+       "place executables in that directory, so Emacs won't find them. "
+       "If you are missing some commands, do add this directory to your "
+       "PATH.\n\n"))
 
     ;; Python found, but can't find the elpy module
     (when (and (gethash "python_rpc_executable" config)
@@ -958,8 +968,8 @@ virtual_env_short"
                                                          importmagic-version
                                                          importmagic-latest))
             ("Autopep8" . ,(elpy-config--package-link "autopep8"
-                                                         autopep8-version
-                                                         autopep8-latest))
+                                                      autopep8-version
+                                                      autopep8-latest))
             ("Syntax checker" . ,(let ((syntax-checker
                                         (executable-find
                                          python-check-command)))
@@ -1585,6 +1595,10 @@ with a prefix argument)."
 ;;;;;;;;;;;;;;
 ;;; Navigation
 
+(defvar elpy-nav-expand--initial-position nil
+  "Initial position before expanding to indentation.")
+(make-variable-buffer-local 'elpy-nav-expand--initial-position)
+
 (defun elpy-goto-definition ()
   "Go to the definition of the symbol at point, if found."
   (interactive)
@@ -1609,7 +1623,8 @@ This will skip over lines and statements with different
 indentation levels."
   (interactive)
   (let ((indent (current-column))
-        (start (point)))
+        (start (point))
+        (cur nil))
     (when (/= (% indent python-indent-offset)
               0)
       (setq indent (* (1+ (/ indent python-indent-offset))
@@ -1617,6 +1632,9 @@ indentation levels."
     (python-nav-forward-statement)
     (while (and (< indent (current-indentation))
                 (not (eobp)))
+      (when (equal (point) cur)
+        (error "Statement does not finish"))
+      (setq cur (point))
       (python-nav-forward-statement))
     (when (< (current-indentation)
              indent)
@@ -1629,7 +1647,8 @@ This will skip over lines and statements with different
 indentation levels."
   (interactive)
   (let ((indent (current-column))
-        (start (point)))
+        (start (point))
+        (cur nil))
     (when (/= (% indent python-indent-offset)
               0)
       (setq indent (* (1+ (/ indent python-indent-offset))
@@ -1637,6 +1656,9 @@ indentation levels."
     (python-nav-backward-statement)
     (while (and (< indent (current-indentation))
                 (not (bobp)))
+      (when (equal (point) cur)
+        (error "Statement does not start"))
+      (setq cur (point))
       (python-nav-backward-statement))
     (when (< (current-indentation)
              indent)
@@ -1732,14 +1754,57 @@ indentation levels."
 (defun elpy-nav-expand-to-indentation ()
   "Select surrounding lines with current indentation."
   (interactive)
+  (setq elpy-nav-expand--initial-position (point))
   (let ((indentation (current-indentation)))
-    (while (<= indentation (current-indentation))
-      (forward-line -1))
-    (forward-line 1)
+    (if (= indentation 0)
+        (mark-whole-buffer)
+      (while (<= indentation (current-indentation))
+        (forward-line -1))
+      (forward-line 1)
+      (push-mark (point) nil t)
+      (while (<= indentation (current-indentation))
+        (forward-line 1))
+      (backward-char))))
+
+(defadvice keyboard-quit (before collapse-region activate)
+  (when (eq last-command 'elpy-nav-expand-to-indentation)
+    (goto-char elpy-nav-expand--initial-position)))
+
+(defun elpy-nav-normalize-region ()
+  "If the first or last line are not fully selected, select them completely."
+  (let ((beg (region-beginning))
+        (end (region-end)))
+    (goto-char beg)
+    (beginning-of-line)
     (push-mark (point) nil t)
-    (while (<= indentation (current-indentation))
-      (forward-line 1))
-    (backward-char)))
+    (goto-char end)
+    (when (not (= (point) (line-beginning-position)))
+      (end-of-line))))
+
+(defun elpy-nav-indent-shift-right (&optional count)
+  "Shift current line by COUNT columns to the right.
+
+COUNT defaults to `python-indent-offset'.
+If region is active, normalize the region and shift."
+  (interactive)
+  (if (use-region-p)
+      (progn
+        (elpy-nav-normalize-region)
+        (python-indent-shift-right (region-beginning) (region-end) current-prefix-arg))
+    (python-indent-shift-right (line-beginning-position) (line-end-position) current-prefix-arg)))
+
+(defun elpy-nav-indent-shift-left (&optional count)
+  "Shift current line by COUNT columns to the left.
+
+COUNT defaults to `python-indent-offset'.
+If region is active, normalize the region and shift."
+  (interactive)
+  (if (use-region-p)
+      (progn
+        (elpy-nav-normalize-region)
+        (python-indent-shift-left (region-beginning) (region-end) current-prefix-arg))
+    (python-indent-shift-left (line-beginning-position) (line-end-position) current-prefix-arg)))
+
 
 ;;;;;;;;;;;;;;;;
 ;;; Test running
@@ -1815,7 +1880,7 @@ directory is not nil."
            (file buffer-file-name)
            (module (elpy-test--module-name-for-file top file))
            (test (elpy-test--current-test-name)))
-      (if (and file (string-match "/test[^/]*$" file))
+      (if (and file (string-match "test" (or module test "")))
           (progn
             (save-buffer)
             (list top file module test))
@@ -2060,6 +2125,7 @@ prefix argument is given, prompt for a symbol from the user."
         (list (if (equal user-choice "") first-choice user-choice)))))))
 
 (defun elpy-importmagic-add-import (statement)
+  "Prompt to import thing at point, show possbile imports and add selected import."
   (interactive (elpy-importmagic--add-import-read-args))
   (unless (equal statement "")
     (let* ((res (elpy-rpc "add_import" (list buffer-file-name
@@ -2203,7 +2269,9 @@ name."
                              "symbol at point were found by the backend."))
           (message "No occurrences of the symbol at point found")))
        (t
-        (elpy-multiedit--usages usages))))))
+        (save-restriction
+          (widen)
+          (elpy-multiedit--usages usages)))))))
 
 (defun elpy-multiedit--usages (usages)
   "Mark the usages in USAGES for editing."
@@ -2549,6 +2617,8 @@ died, this will kill the process and buffer."
                        full-python-command))
          (new-elpy-rpc-buffer (generate-new-buffer name))
          (proc nil))
+    (when (not full-python-command)
+      (error "Can't find Python command, configure `elpy-rpc-python-command'"))
     (with-current-buffer new-elpy-rpc-buffer
       (setq elpy-rpc--buffer-p t
             elpy-rpc--buffer (current-buffer)
@@ -2629,10 +2699,13 @@ RPC calls with the event."
                 (did-read-json nil))
             (goto-char (point-min))
             (condition-case err
-                (setq json (let ((json-array-type 'list))
-                             (json-read))
-                      line-end (1+ (point))
-                      did-read-json t)
+                (progn
+                  (setq json (let ((json-array-type 'list))
+                               (json-read)))
+                  (if (listp json)
+                      (setq  line-end (1+ (point))
+                             did-read-json t)
+                    (goto-char (point-min))))
               (error
                (goto-char (point-min))))
             (cond
@@ -2848,6 +2921,13 @@ protocol if the buffer is larger than
   (if (use-region-p)
       (buffer-substring (region-beginning) (region-end))))
 
+(defun elpy-rpc--disconnect ()
+  "Disconnect rpc process from elpy buffers."
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (memq 'elpy-mode minor-mode-list)
+        (setq elpy-rpc--buffer nil)))))
+
 ;; RPC API functions
 
 (defun elpy-rpc-restart ()
@@ -2941,8 +3021,8 @@ Returns a possible multi-line docstring for the symbol at point."
   "Get the Pydoc documentation for SYMBOL.
 
 Returns a possible multi-line docstring."
-    (elpy-rpc "get_pydoc_documentation" (list symbol)
-              success error))
+  (elpy-rpc "get_pydoc_documentation" (list symbol)
+            success error))
 
 (defun elpy-rpc-get-usages (&optional success error)
   (elpy-rpc "get_usages"
@@ -3028,7 +3108,8 @@ time. Honestly."
   (pcase command
     (`global-init
      (require 'company)
-     (elpy-modules-remove-modeline-lighter 'company-mode)
+     (when elpy-company-hide-modeline
+       (elpy-modules-remove-modeline-lighter 'company-mode))
      (define-key company-active-map (kbd "C-d")
        'company-show-doc-buffer))
     (`buffer-init
@@ -3268,7 +3349,9 @@ display the current class and method instead."
          (set (make-local-variable 'flymake-warning-predicate) "^W[0-9]")
        (set (make-local-variable 'flymake-warning-re) "^W[0-9]"))
 
-     (flymake-mode 1))
+     (when (and (buffer-file-name)
+                (executable-find python-check-command))
+       (flymake-mode 1)))
     (`buffer-stop
      (flymake-mode -1)
      (kill-local-variable 'flymake-no-changes-timeout)
@@ -3390,13 +3473,19 @@ description."
 (defun elpy-autopep8-fix-code ()
   "Automatically formats Python code to conform to the PEP 8 style guide."
   (interactive)
-  (if (use-region-p)
-    (let ((new-block (elpy-rpc "fix_code" (list (elpy-rpc--region-contents))))
-          (beg (region-beginning)) (end (region-end)))
-      (elpy-buffer--replace-region beg end new-block))
-    (let ((new-block (elpy-rpc "fix_code" (list (elpy-rpc--buffer-contents))))
-          (beg (point-min)) (end (point-max)))
-      (elpy-buffer--replace-region beg end new-block))))
+  (let ((line (line-number-at-pos))
+        (col (current-column)))
+    (if (use-region-p)
+        (let ((new-block (elpy-rpc "fix_code" (list (elpy-rpc--region-contents))))
+              (beg (region-beginning)) (end (region-end)))
+          (elpy-buffer--replace-region beg end new-block))
+      ;; Vector instead of list, json.el in Emacs 24.3 and before
+      ;; breaks for single-element lists of alists.
+      (let ((new-block (elpy-rpc "fix_code" (vector (elpy-rpc--buffer-contents))))
+            (beg (point-min)) (end (point-max)))
+        (elpy-buffer--replace-region beg end new-block)))
+    (forward-line (1- line))
+    (forward-char col)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Backwards compatibility
@@ -3442,6 +3531,12 @@ description."
 
 (when (not (fboundp 'python-shell-send-string))
   (defalias 'python-shell-send-string 'python-send-string))
+
+(when (not (fboundp 'python-indent-shift-right))
+  (defalias 'python-indent-shift-right 'python-shift-right))
+
+(when (not (fboundp 'python-indent-shift-left))
+  (defalias 'python-indent-shift-left 'python-shift-left))
 
 ;; Emacs 24.2 made `locate-dominating-file' accept a predicate instead
 ;; of a string. Simply overwrite the current one, it's
