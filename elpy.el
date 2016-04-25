@@ -3830,6 +3830,60 @@ which we're looking."
            highlight-indent-active)
       (highlight-indentation)))))
 
+;; Only Emacs 25.0 and later have these functions
+(when (not (fboundp 'python-nav-beginning-of-statement))
+  (defun python-nav-beginning-of-statement ()
+    "Move to start of current statement."
+    (interactive "^")
+    (back-to-indentation)
+    (let* ((ppss (syntax-ppss))
+           (context-point
+            (or
+             (python-syntax-context 'paren ppss)
+             (python-syntax-context 'string ppss))))
+      (cond ((bobp))
+            (context-point
+             (goto-char context-point)
+             (python-nav-beginning-of-statement))
+            ((save-excursion
+               (forward-line -1)
+               (python-info-line-ends-backslash-p))
+             (forward-line -1)
+             (python-nav-beginning-of-statement))))
+    (point-marker)))
+
+(when (not (fboundp 'python-nav-end-of-statement))
+  (defun python-nav-end-of-statement (&optional noend)
+    "Move to end of current statement.
+Optional argument NOEND is internal and makes the logic to not
+jump to the end of line when moving forward searching for the end
+of the statement."
+    (interactive "^")
+    (let (string-start bs-pos)
+      (while (and (or noend (goto-char (line-end-position)))
+                  (not (eobp))
+                  (cond ((setq string-start (python-syntax-context 'string))
+                         (goto-char string-start)
+                         (if (python-syntax-context 'paren)
+                             ;; Ended up inside a paren, roll again.
+                             (python-nav-end-of-statement t)
+                           ;; This is not inside a paren, move to the
+                           ;; end of this string.
+                           (goto-char (+ (point)
+                                         (python-syntax-count-quotes
+                                          (char-after (point)) (point))))
+                           (or (re-search-forward (rx (syntax string-delimiter)) nil t)
+                               (goto-char (point-max)))))
+                        ((python-syntax-context 'paren)
+                         ;; The statement won't end before we've escaped
+                         ;; at least one level of parenthesis.
+                         (condition-case err
+                             (goto-char (scan-lists (point) 1 -1))
+                           (scan-error (goto-char (nth 3 err)))))
+                        ((setq bs-pos (python-info-line-ends-backslash-p))
+                         (goto-char bs-pos)
+                         (forward-line 1))))))
+    (point-marker)))
 
 (provide 'elpy)
 ;;; elpy.el ends here

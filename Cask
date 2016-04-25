@@ -6,7 +6,7 @@
 (package "elpy" "1.11.0" "Emacs Python Development Environment")
 
 (depends-on "company" "0.8.0")
-(depends-on "find-file-in-project" "3.3")
+;(depends-on "find-file-in-project" "3.3")
 (depends-on "highlight-indentation" "0.5.0")
 (depends-on "pyvenv" "1.2")
 (depends-on "yasnippet" "0.8.0")
