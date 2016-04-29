@@ -1,10 +1,10 @@
 ;;; elpy.el --- Emacs Python Development Environment -*- lexical-binding: t -*-
 
-;; Copyright (C) 2012-2014  Jorgen Schaefer
+;; Copyright (C) 2012-2016  Jorgen Schaefer
 
 ;; Author: Jorgen Schaefer <contact@jorgenschaefer.de>
 ;; URL: https://github.com/jorgenschaefer/elpy
-;; Version: 1.11.0
+;; Version: 1.12.0
 ;; Keywords: Python, IDE, Languages, Tools
 ;; Package-Requires: ((company "0.8.2") (find-file-in-project "3.3")  (highlight-indentation "0.5.0") (pyvenv "1.3") (yasnippet "0.8.0"))
 
@@ -31,7 +31,7 @@
 
 ;; For more information, read the Elpy manual:
 
-;; http://elpy.readthedocs.org/en/latest/index.html
+;; https://elpy.readthedocs.io/en/latest/index.html
 
 ;;; Code:
 
@@ -46,7 +46,7 @@
 (require 'elpy-refactor)
 (require 'pyvenv)
 
-(defconst elpy-version "1.11.0"
+(defconst elpy-version "1.12.0"
   "The version of the Elpy lisp code.")
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -153,6 +153,15 @@ uninteresting information, but if you rely on your modeline in other modes,
 you might want to keep it."
   :type 'boolean
   :group 'elpy)
+  
+(defcustom elpy-dedicated-shells nil
+  "Non-nil if Elpy should use dedicated shells.
+
+Elpy can use a unique python shell for all buffers and support
+manually started dedicated shells. Setting this option to non-nil
+force the creation of dedicated shells for each buffers."
+  :type 'boolean
+  :group 'elpy)
 
 (defcustom elpy-rpc-backend nil
   "Your preferred backend.
@@ -205,7 +214,7 @@ this to prevent this from happening."
   :safe #'integerp
   :group 'elpy)
 
-(defcustom elpy-rpc-python-command (if (equal system-type "windows-nt")
+(defcustom elpy-rpc-python-command (if (equal system-type 'windows-nt)
                                        "pythonw"
                                      "python")
   "The Python interpreter for the RPC backend.
@@ -260,6 +269,22 @@ message again within this amount of seconds."
   :type 'integer
   :group 'elpy)
 
+(defcustom elpy-company-post-completion-function 'ignore
+  "Your preferred Company post completion function.
+
+Elpy can automatically insert parentheses after completing
+callable objects.
+
+The heuristic on when to insert these parentheses can easily be
+wrong, though, so this is disabled by default. Set this variable
+to the function `elpy-company-post-complete-parens' to enable
+this feature."
+  :type '(choice (const :tag "Ignore post complete" ignore)
+                 (const :tag "Complete callables with parens"
+                        elpy-company-post-complete-parens)
+                 (function :tag "Other function"))
+  :group 'elpy)
+
 (defcustom elpy-eldoc-show-current-function t
   "If true, show the current function if no calltip is available.
 
@@ -310,13 +335,27 @@ edited instead. Setting this variable to nil disables this feature."
   :type 'string
   :group 'elpy)
 
-(defcustom elpy-disable-backend-error-display nil
+(defcustom elpy-disable-backend-error-display t
   "Non-nil if Elpy should disable backed error display."
   :type 'boolean
   :group 'elpy)
 
 ;;;;;;;;;;;;;
 ;;; Elpy Mode
+
+(defvar elpy-refactor-map
+  (let ((map (make-sparse-keymap "Refactor")))
+    (define-key map (kbd "i") (cons (format "%smport fixup"
+                                            (propertize "i" 'face 'bold))
+                                    'elpy-importmagic-fixup))
+    (define-key map (kbd "f") (cons (format "%sormat code"
+                                            (propertize "f" 'face 'bold))
+                                    'elpy-format-code))
+    (define-key map (kbd "r") (cons (format "%sefactor"
+                                            (propertize "r" 'face 'bold))
+                                    'elpy-refactor))
+    map)
+  "Key map for the refactor command")
 
 (defvar elpy-mode-map
   (let ((map (make-sparse-keymap)))
@@ -342,9 +381,7 @@ edited instead. Setting this variable to nil disables this feature."
     (define-key map (kbd "C-c C-t") 'elpy-test)
     (define-key map (kbd "C-c C-v") 'elpy-check)
     (define-key map (kbd "C-c C-z") 'elpy-shell-switch-to-shell)
-    (define-key map (kbd "C-c C-r i") 'elpy-importmagic-fixup)
-    (define-key map (kbd "C-c C-r f") 'elpy-format-code)
-    (define-key map (kbd "C-c C-r r") 'elpy-refactor)
+    (define-key map (kbd "C-c C-r") elpy-refactor-map)
 
     (define-key map (kbd "<S-return>") 'elpy-open-and-indent-line-below)
     (define-key map (kbd "<C-S-return>") 'elpy-open-and-indent-line-above)
@@ -484,8 +521,8 @@ virtualenv.
   (with-current-buffer (get-buffer-create "*Elpy News*")
     (let ((inhibit-read-only t))
       (erase-buffer)
-      (insert-file (concat (file-name-directory (locate-library "elpy"))
-                           "NEWS.rst"))
+      (insert-file-contents (concat (file-name-directory (locate-library "elpy"))
+                                    "NEWS.rst"))
       (help-mode))
     (pop-to-buffer (current-buffer))))
 
@@ -1100,9 +1137,15 @@ PyPI, or nil if that's VERSION."
                         ""))
 
          (command (cond
-                   ((executable-find "pip")
-                    (format "pip install %s%s%s"
-                            user-option upgrade-option python-package))
+                   ((= (call-process elpy-rpc-python-command
+                                     nil nil nil
+                                     "-m" "pip" "--help")
+                       0)
+                    (format "%s -m pip install %s%s%s"
+                            elpy-rpc-python-command
+                            user-option
+                            upgrade-option
+                            python-package))
                    ((executable-find "easy_install")
                     (format "easy_install %s%s"
                             user-option python-package))
@@ -1568,11 +1611,20 @@ code is executed."
 (defun elpy-shell-get-or-create-process ()
   "Get or create an inferior Python process for current buffer and return it."
   (let* ((bufname (format "*%s*" (python-shell-get-process-name nil)))
-         (proc (get-buffer-process bufname)))
-    (if proc
-        proc
-      (run-python (python-shell-parse-command))
-      (get-buffer-process bufname))))
+	 (dedbufname (format "*%s*" (python-shell-get-process-name t)))
+	 (proc (get-buffer-process bufname))
+	 (dedproc (get-buffer-process dedbufname)))
+    (if elpy-dedicated-shells
+	(if dedproc
+	    dedproc
+	  (run-python (python-shell-parse-command) t)
+	  (get-buffer-process dedbufname))
+      (if dedproc
+	  dedproc
+	(if proc
+	    proc
+	  (run-python (python-shell-parse-command))
+	  (get-buffer-process bufname))))))
 
 (defun elpy-shell--region-without-indentation (beg end)
   "Return the current region as a string, but without indentation."
@@ -2149,7 +2201,7 @@ prefix argument is given, prompt for a symbol from the user."
       (delete-region beg end))))
 
 
-;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Import manipulation
 
 (defun elpy-importmagic--add-import-read-args (&optional object prompt)
@@ -2204,6 +2256,46 @@ Also sort the imports in the import statement blocks."
                                                             (elpy-rpc--buffer-contents)))))
     (unless (stringp res)
       (elpy-buffer--replace-block res))))
+
+;;;;;;;;;;;;;;;;;;;;;
+;;; Code reformatting
+
+(defun elpy-format-code ()
+  "Format code using the available formatter."
+  (interactive)
+  (cond
+   ((executable-find "yapf")
+    (elpy-yapf-fix-code))
+   ((executable-find "autopep8")
+    (elpy-autopep8-fix-code))
+   (t
+    (message "Install yapf/autopep8 to format code."))))
+
+(defun elpy-yapf-fix-code ()
+  "Automatically formats Python code with yapf."
+  (interactive)
+  (elpy--fix-code-with-formatter "fix_code_with_yapf"))
+
+(defun elpy-autopep8-fix-code ()
+  "Automatically formats Python code to conform to the PEP 8 style guide."
+  (interactive)
+  (elpy--fix-code-with-formatter "fix_code"))
+
+(defun elpy--fix-code-with-formatter (method)
+  "Common routine for formatting python code."
+  (let ((line (line-number-at-pos))
+        (col (current-column)))
+    (if (use-region-p)
+        (let ((new-block (elpy-rpc method (list (elpy-rpc--region-contents))))
+              (beg (region-beginning)) (end (region-end)))
+          (elpy-buffer--replace-region beg end new-block))
+      ;; Vector instead of list, json.el in Emacs 24.3 and before
+      ;; breaks for single-element lists of alists.
+      (let ((new-block (elpy-rpc method (vector (elpy-rpc--buffer-contents))))
+            (beg (point-min)) (end (point-max)))
+        (elpy-buffer--replace-region beg end new-block)))
+    (forward-line (1- line))
+    (forward-char col)))
 
 ;;;;;;;;;;;;;;
 ;;; Multi-Edit
@@ -2786,8 +2878,8 @@ RPC calls with the event."
     (elpy-insert--popup "*Elpy Version Mismatch*"
       (elpy-insert--header "Elpy Version Mismatch")
       (elpy-insert--para
-       "You are not using the same version of Elpy in Emacs Lisp"
-       "compared to Python. This can cause random problems. Please"
+       "You are not using the same version of Elpy in Emacs Lisp "
+       "compared to Python. This can cause random problems. Please "
        "do make sure to use compatible versions.\n")
       (insert
        "\n"
@@ -3233,6 +3325,105 @@ here, and return the \"name\" as used by the backend."
               name))
           result))
 
+(defun elpy-company--python-exception-p (name)
+  "Check whether NAME is a Python exception."
+  (member name '("ArithmeticError"
+                 "AssertionError"
+                 "AttributeError"
+                 "BlockingIOError"
+                 "BrokenPipeError"
+                 "BufferError"
+                 "BytesWarning"
+                 "ChildProcessError"
+                 "ConnectionAbortedError"
+                 "ConnectionError"
+                 "ConnectionRefusedError"
+                 "ConnectionResetError"
+                 "DeprecationWarning"
+                 "EOFError"
+                 "EnvironmentError"
+                 "Exception"
+                 "FileExistsError"
+                 "FileNotFoundError"
+                 "FloatingPointError"
+                 "FutureWarning"
+                 "IOError"
+                 "ImportError"
+                 "ImportWarning"
+                 "IndentationError"
+                 "IndexError"
+                 "InterruptedError"
+                 "IsADirectoryError"
+                 "KeyError"
+                 "LookupError"
+                 "MemoryError"
+                 "NameError"
+                 "NotADirectoryError"
+                 "NotImplementedError"
+                 "OSError"
+                 "OverflowError"
+                 "PendingDeprecationWarning"
+                 "PermissionError"
+                 "ProcessLookupError"
+                 "RecursionError"
+                 "ReferenceError"
+                 "ResourceWarning"
+                 "RuntimeError"
+                 "RuntimeWarning"
+                 "StandardError"
+                 "StopAsyncIteration"
+                 "StopIteration"
+                 "SyntaxError"
+                 "SyntaxWarning"
+                 "SystemError"
+                 "TabError"
+                 "TimeoutError"
+                 "TypeError"
+                 "UnboundLocalError"
+                 "UnicodeDecodeError"
+                 "UnicodeEncodeError"
+                 "UnicodeError"
+                 "UnicodeTranslateError"
+                 "UnicodeWarning"
+                 "UserWarning"
+                 "ValueError"
+                 "Warning"
+                 "ZeroDivisionError")))
+
+(defun elpy-company-post-complete-parens (annotation name)
+  "Complete functions, classes, and callable instances with parentheses.
+
+Add parentheses in case ANNOTATION is \"class\", \"function\", or \"instance\",
+unless the completion is already looking at a left parenthesis,
+or unless NAME is a Python exception outside a reasonably formed raise statement,
+or unless NAME is no callable instance."
+  (when (not (looking-at-p "\("))
+    (cond ((string= annotation "function")
+           (insert "()")
+           (backward-char 1))
+          ((string= annotation "class")
+           (cond ((elpy-company--python-exception-p name)
+                  (when (save-excursion
+                          (backward-word 2)
+                          (looking-at "\\_<raise\\_>"))
+                    (insert "()")
+                    (backward-char 1)))
+                 (t
+                  (insert "()")
+                  (backward-char 1))))
+          ((string= annotation "instance")
+           ;; The jedi backend annotates some callables as instances (e.g. numpy
+           ;; and scipy) and `elpy-company--cache' does not allow to identify
+           ;; callable instances.
+           ;; It looks easy to modify `elpy-company--cache' cheaply for the jedi
+           ;; backend to eliminate the `elpy-rpc-get-calltip' call below, but
+           ;; not for the rope backend.
+           (insert "()")
+           (backward-char 1)
+           (when (not (elpy-rpc-get-calltip))
+             (backward-char 1)
+             (delete-char 2))))))
+
 (defun elpy-company-backend (command &optional arg &rest ignored)
   "A company-mode backend for Elpy."
   (interactive (list 'interactive))
@@ -3285,7 +3476,8 @@ here, and return the \"name\" as used by the backend."
     ;; doc-buffer <candidate> => put doc buffer in `company-doc-buffer'
     (`doc-buffer
      (let* ((name (elpy-company--cache-name arg))
-            (doc (elpy-rpc-get-completion-docstring name)))
+            (doc (when name
+                   (elpy-rpc-get-completion-docstring name))))
        (when doc
          (company-doc-buffer doc))))
     ;; require-match => Never require a match, even if the user
@@ -3296,13 +3488,17 @@ here, and return the \"name\" as used by the backend."
     ;; line-number)
     (`location
      (let* ((name (elpy-company--cache-name arg))
-            (loc (elpy-rpc-get-completion-location name)))
+            (loc (when name
+                   (elpy-rpc-get-completion-location name))))
        (when loc
          (cons (car loc)
                (cadr loc)))))
     ;; match <candidate> => for non-prefix based backends
     ;; post-completion <candidate> => after insertion, for snippets
-    ))
+    (`post-completion
+     (funcall elpy-company-post-completion-function
+              (elpy-company--cache-annotation arg)
+              (elpy-company--cache-name arg)))))
 
 (defun elpy--sort-and-strip-duplicates (seq)
   "Sort SEQ and remove any duplicates."
@@ -3522,50 +3718,6 @@ description."
      (yas-minor-mode 1))
     (`buffer-stop
      (yas-minor-mode -1))))
-
-
-(defun elpy--fix-code-with-formatter (method)
-  "Common routine for formatting python code."
-  (let ((line (line-number-at-pos))
-        (col (current-column)))
-    (if (use-region-p)
-        (let ((new-block (elpy-rpc method (list (elpy-rpc--region-contents))))
-              (beg (region-beginning)) (end (region-end)))
-          (elpy-buffer--replace-region beg end new-block))
-      ;; Vector instead of list, json.el in Emacs 24.3 and before
-      ;; breaks for single-element lists of alists.
-      (let ((new-block (elpy-rpc method (vector (elpy-rpc--buffer-contents))))
-            (beg (point-min)) (end (point-max)))
-        (elpy-buffer--replace-region beg end new-block)))
-    (forward-line (1- line))
-    (forward-char col)))
-
-(defun elpy-format-code ()
-  "Format code using the available formatter."
-  (interactive)
-  (cond
-   ((executable-find "yapf")
-    (elpy-yapf-fix-code))
-   ((executable-find "autopep8")
-    (elpy-autopep8-fix-code))
-   (t
-    (message "Install yapf/autopep8 to format code."))))
-
-;;;;;;;;;;;;;;;;;;
-;;; Module: autopep8
-
-(defun elpy-autopep8-fix-code ()
-  "Automatically formats Python code to conform to the PEP 8 style guide."
-  (interactive)
-  (elpy--fix-code-with-formatter "fix_code"))
-
-;;;;;;;;;;;;;;;;;;
-;;; Module: yapf
-
-(defun elpy-yapf-fix-code ()
-  "Automatically formats Python code with yapf."
-  (interactive)
-  (elpy--fix-code-with-formatter "fix_code_with_yapf"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Backwards compatibility
