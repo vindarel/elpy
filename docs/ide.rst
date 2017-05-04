@@ -133,6 +133,11 @@ projects.
    turning :kbd:`M-.` and :kbd:`M-*` into a forward and backward
    motion for definition lookups.
 
+.. command:: elpy-occur-definitions
+   :kbd: C-c C-o
+
+   Search the buffer for a list of definitions of classes and functions.
+
 Interactive Python
 ==================
 
@@ -178,25 +183,25 @@ easier to send code snippets over.
    Similar to :kbd:`C-c C-c`, this will send the code of the current
    top level class or function to the interactive Python process.
 
-.. option:: elpy-interactive-python-command
+.. command:: elpy-shell-kill
+   :kbd: C-c C-k
 
-   This option changes the default interpreter to use for the
-   interactive Python shell. While there are options available from
-   ``python-mode``, using this one will do the right thing when you
-   choose to use `IPython`_.
+   Kill the current python shell.
+   If ``elpy-dedicated-shells`` is non-nil,
+   kill the current buffer dedicated shell.
 
-   The problem is that IPython uses a different prompt pattern and
-   slightly different modules for tab completion, which confuses the
-   standard ``python-mode`` interactive shell mode. Using this
-   variable will change all associated options to deal with IPython
-   correctly.
+.. command:: elpy-shell-kill-all
+   :kbd: C-c C-K
+
+   Kill all active python shells.
 
 .. command:: elpy-use-ipython
 .. command:: elpy-use-cpython
 
-   Alternatively, you can also use these commands, either
-   interactively or from your ``.emacs``, to set the interactive
-   interpreter.
+   Use these commands, either interactively or from your ``.emacs``,
+   to set the interactive interpreter to either ipython or cpython. As
+   ipython requires some more setup work in older Emacsen, these will
+   take care of the right setup for you.
 
    As an IPython user, you might be interested in the `Emacs IPython
    Notebook`_, too.
@@ -295,10 +300,10 @@ advantages this brings.
    Test Runners`.
 
    Note on Django runners: by default, elpy runs Django tests with
-   :kbd:`django-admin.py`. You must set the environnement variable
+   :kbd:`django-admin.py`. You must set the environment variable
    :envvar:`DJANGO_SETTINGS_MODULE` accordingly. Alternatively, you can set
    **elpy-test-django-with-manage** to **t** in order to use your
-   project's :kbd:`manage.py`. You then don't need to set the environnement
+   project's :kbd:`manage.py`. You then don't need to set the environment
    variable, but change virtual envs (see `virtualenvwrapper.el`_).
 
 This enables a good workflow. You write a test and use :kbd:`C-c C-t`
@@ -368,3 +373,38 @@ Elpy supports various forms of refactoring Python code.
    options depending on the context.
 
 .. _rope: https://github.com/python-rope/rope
+
+
+Django
+======
+
+Elpy has basic Django support such as parsing either `manage.py` or `django-admin.py` (If it
+does not find `manage.py` it falls back to `django-admin.py`) for command completion assistance.
+Can also start `runserver` automatically and you can give an ip address and port.
+
+.. command:: elpy-django-command
+   :kbd: C-c C-x c
+
+   Choose what command you'd like to run via `django-admin.py` or `manage.py`.
+
+.. command:: elpy-django-runserver
+   :kbd: C-c C-x r
+
+
+   Start the development server command, `runserver`. Default arguments are `127.0.0.1` for
+   ip address and `8000` for port. These can be changed via ``elpy-django-server-ipaddr`` and
+   ``elpy-django-server-port``.
+
+
+Profiling
+=========
+
+Elpy allows to profile asynchronously python scripts using `cProfile`.
+
+.. command:: elpy-profile-buffer-or-region
+
+   Send the current buffer or region to the profiler and display the result with
+   ``elpy-profile-visualizer``.
+   The default visualizer is `snakeviz`_, a browser-based graphical profile viewer that can be installed with `pip install snakeviz`.
+   If the profiling fails, the python error output is displayed.
+.. _snakeviz: https://jiffyclub.github.io/snakeviz/

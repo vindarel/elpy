@@ -4,9 +4,9 @@
 
 ;; Author: Jorgen Schaefer <contact@jorgenschaefer.de>
 ;; URL: https://github.com/jorgenschaefer/elpy
-;; Version: 1.12.0
+;; Version: 1.15.0
 ;; Keywords: Python, IDE, Languages, Tools
-;; Package-Requires: ((company "0.8.2") (find-file-in-project "3.3")  (highlight-indentation "0.5.0") (pyvenv "1.3") (yasnippet "0.8.0"))
+;; Package-Requires: ((company "0.9.2") (find-file-in-project "3.3")  (highlight-indentation "0.5.0") (pyvenv "1.3") (yasnippet "0.8.0") (s "1.11.0"))
 
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License
@@ -44,9 +44,11 @@
 (require 'python)
 
 (require 'elpy-refactor)
+(require 'elpy-django)
+(require 'elpy-profile)
 (require 'pyvenv)
 
-(defconst elpy-version "1.12.0"
+(defconst elpy-version "1.15.0"
   "The version of the Elpy lisp code.")
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -71,7 +73,8 @@ This can be used to enable minor modes for Python development."
                           elpy-module-flymake
                           elpy-module-highlight-indentation
                           elpy-module-pyvenv
-                          elpy-module-yasnippet)
+                          elpy-module-yasnippet
+                          elpy-module-django)
   "Which Elpy modules to use.
 
 Elpy can use a number of modules for additional features, which
@@ -88,6 +91,8 @@ can be inidividually enabled or disabled."
                      elpy-module-highlight-indentation)
               (const :tag "Expand code snippets (YASnippet)"
                      elpy-module-yasnippet)
+              (const :tag "Django configurations (Elpy-Django)"
+                     elpy-module-django)
               (const :tag "Configure some sane defaults for Emacs"
                      elpy-module-sane-defaults))
   :group 'elpy)
@@ -359,6 +364,8 @@ set to t elpy will use `elpy-test-django-runner-manage-command' and set the proj
 
 ;;;;;;;;;;;;;
 ;;; Elpy Mode
+(defvar elpy--shell-last-py-buffer nil
+  "Help keep track of python buffer when changing to pyshell.")
 
 (defvar elpy-refactor-map
   (let ((map (make-sparse-keymap "Refactor")))
@@ -398,7 +405,10 @@ set to t elpy will use `elpy-test-django-runner-manage-command' and set the proj
     (define-key map (kbd "C-c C-t") 'elpy-test)
     (define-key map (kbd "C-c C-v") 'elpy-check)
     (define-key map (kbd "C-c C-z") 'elpy-shell-switch-to-shell)
+    (define-key map (kbd "C-c C-k") 'elpy-shell-kill)
+    (define-key map (kbd "C-c C-K") 'elpy-shell-kill-all)
     (define-key map (kbd "C-c C-r") elpy-refactor-map)
+    (define-key map (kbd "C-c C-x") elpy-django-mode-map)
 
     (define-key map (kbd "<S-return>") 'elpy-open-and-indent-line-below)
     (define-key map (kbd "<C-S-return>") 'elpy-open-and-indent-line-above)
@@ -449,7 +459,11 @@ set to t elpy will use `elpy-test-django-runner-manage-command' and set the proj
                "Send Buffer to Python")
       :help "Send the current region or the whole buffer to Python"]
      ["Send Definition" python-shell-send-defun
-      :help "Send current definition to Python"])
+      :help "Send current definition to Python"]
+     ["Kill Python shell" elpy-shell-kill
+      :help "Kill the current Python shell"]
+     ["Kill all Python shells" elpy-shell-kill-all
+      :help "Kill all Python shells"])
     ("Project"
      ["Find File" elpy-find-file
       :help "Interactively find a file in the current project"]
@@ -556,6 +570,7 @@ virtualenv.
     ("Snippets (YASnippet)" yasnippet "yas-")
     ("Directory Grep (rgrep)" grep "grep-")
     ("Search as You Type (ido)" ido "ido-")
+    ("Django Extension" elpy-django "elpy-django-")
     ;; ffip does not use defcustom
     ;; highlight-indent does not use defcustom, either. Its sole face
     ;; is defined in basic-faces.
@@ -1619,12 +1634,66 @@ code is executed."
 (defun elpy-shell-switch-to-shell ()
   "Switch to inferior Python process buffer."
   (interactive)
+  (setq elpy--shell-last-py-buffer (buffer-name))
   (pop-to-buffer (process-buffer (elpy-shell-get-or-create-process))))
 
 (defun elpy-shell-switch-to-buffer ()
   "Switch from inferior Python process buffer to recent Python buffer."
   (interactive)
-  (pop-to-buffer (other-buffer (current-buffer) 1)))
+  (pop-to-buffer elpy--shell-last-py-buffer))
+
+(defun elpy-shell-kill (&optional kill-buff)
+  "Kill the current python shell.
+
+If `elpy-dedicated-shells' is non-nil,
+kill the current buffer dedicated shell.
+
+If KILL-BUFF is non-nil, also kill the associated buffer."
+  (interactive)
+  (let ((shell-buffer (python-shell-get-buffer)))
+    (cond
+     (shell-buffer
+      (delete-process shell-buffer)
+      (when kill-buff
+	(kill-buffer shell-buffer))
+      (message "Killed %s shell" shell-buffer))
+     (t
+      (message "No python shell to kill")))))
+
+(defun elpy-shell-kill-all (&optional kill-buffers ask-for-each-one)
+  "Kill all active python shells.
+
+If KILL-BUFFERS is non-nil, also kill the associated buffers.
+If ASK-FOR-EACH-ONE is non-nil, ask before killing each python process.
+"
+  (interactive)
+  (let ((python-buffer-list ()))
+    ;; Get active python shell buffers and kill inactive ones (if asked)
+    (loop for buffer being the buffers do
+	  (when (and (buffer-name buffer)
+                     (string-match "^\*Python\\\[.*\\]\*$" (buffer-name buffer)))
+	    (if (get-buffer-process buffer)
+		(push buffer python-buffer-list)
+	      (when kill-buffers
+		(kill-buffer buffer)))))
+    (cond
+     ;; Ask for each buffers and kill
+     ((and python-buffer-list ask-for-each-one)
+      (loop for buffer in python-buffer-list do
+	    (when (y-or-n-p (format "Kill %s ?" buffer))
+		(delete-process buffer)
+		(when kill-buffers
+		  (kill-buffer buffer)))))
+     ;; Ask and kill every buffers
+     (python-buffer-list
+      (if (y-or-n-p (format "Kill %s python shells ?" (length python-buffer-list)))
+	  (loop for buffer in python-buffer-list do
+		(delete-process buffer)
+		(when kill-buffers
+		  (kill-buffer buffer)))))
+     ;; No shell to close
+     (t
+      (message "No python shell to close")))))
 
 (defun elpy-shell-get-or-create-process ()
   "Get or create an inferior Python process for current buffer and return it."
@@ -1668,6 +1737,9 @@ code is executed."
         (indent-rigidly (point-min)
                         (point-max)
                         (- indent-level))
+        ;; 'indent-rigidly' introduces tabs despite the fact that 'indent-tabs-mode' is nil
+        ;; 'untabify' fix that
+	(untabify (point-min) (point-max))
         (buffer-string)))))
 
 ;;;;;;;;;;;;;;;;;
@@ -1817,15 +1889,21 @@ indentation levels."
 
 (defun elpy-nav-move-line-or-region-down (&optional beg end)
   "Move the current line or active region down."
-  (interactive "r")
-  (if (use-region-p)
+  (interactive
+   (if (use-region-p)
+       (list (region-beginning) (region-end))
+     (list nil nil)))
+  (if beg
       (elpy--nav-move-region-vertically beg end 1)
     (elpy--nav-move-line-vertically 1)))
 
 (defun elpy-nav-move-line-or-region-up (&optional beg end)
   "Move the current line or active region down."
-  (interactive "r")
-  (if (use-region-p)
+  (interactive
+   (if (use-region-p)
+       (list (region-beginning) (region-end))
+     (list nil nil)))
+  (if beg
       (elpy--nav-move-region-vertically beg end -1)
     (elpy--nav-move-line-vertically -1)))
 
@@ -2088,7 +2166,17 @@ This requires Django 1.6 or the django-discover-runner package."
                       module))))
     (apply #'elpy-test-run
            top
-           elpy-test-django-runner-command)))
+           (append
+            (if elpy-test-django-with-manage
+                (append (list (concat (expand-file-name
+                                       (locate-dominating-file
+                                        (if (elpy-project-root)
+                                            (elpy-project-root)
+                                          ".")
+                                        (car elpy-test-django-runner-manage-command)))
+                                      (car elpy-test-django-runner-manage-command)))
+                        (cdr elpy-test-django-runner-manage-command))
+              elpy-test-django-runner-command)))))
 (put 'elpy-test-django-runner 'elpy-test-runner-p t)
 
 (defun elpy-test-nose-runner (top file module test)
@@ -2238,7 +2326,7 @@ prefix argument is given, prompt for a symbol from the user."
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Import manipulation
 
-(defun elpy-importmagic--add-import-read-args (&optional object prompt)
+(defun elpy-importmagic--add-import-read-args (&optional object prompt ask-for-alias)
   (let* ((default-object (save-excursion
                            (let ((bounds (with-syntax-table python-dotty-syntax-table
                                            (bounds-of-thing-at-point 'symbol))))
@@ -2251,24 +2339,29 @@ prefix argument is given, prompt for a symbol from the user."
     (cond
      ;; An elpy warning (i.e. index not ready) is returned as a string.
      ((stringp possible-imports)
-      (list ""))
+      "")
      ;; If there is no candidate, we exit immediately.
      ((null possible-imports)
       (message "No import candidate found")
-      (list ""))
+      "")
      ;; We have some candidates, let the user choose one.
      (t
-      (let ((first-choice (car possible-imports))
-            (user-choice (completing-read statement-prompt possible-imports)))
-        (list (if (equal user-choice "") first-choice user-choice)))))))
+      (let* ((first-choice (car possible-imports))
+	     (user-choice (completing-read statement-prompt possible-imports))
+	     (alias (if ask-for-alias (read-string (format "Import \"%s\" as: " object-to-import)) "")))
+	(concat (if (equal user-choice "") first-choice user-choice)
+		(if (not (or (equal alias "") (equal alias object-to-import))) (concat " as " alias))))))))
 
-(defun elpy-importmagic-add-import (statement)
-  "Prompt to import thing at point, show possbile imports and add selected import."
-  (interactive (elpy-importmagic--add-import-read-args))
-  (unless (equal statement "")
-    (let* ((res (elpy-rpc "add_import" (list buffer-file-name
-                                             (elpy-rpc--buffer-contents)
-                                             statement))))
+(defun elpy-importmagic-add-import (&optional statement ask-for-alias)
+  "Prompt to import thing at point, show possible imports and add selected import.
+
+With prefix arg, also ask for an import alias."
+  (interactive "i\nP")
+  (let* ((statement (or statement (elpy-importmagic--add-import-read-args nil nil ask-for-alias)))
+	 (res (elpy-rpc "add_import" (list buffer-file-name
+					   (elpy-rpc--buffer-contents)
+					   statement))))
+    (unless (equal statement "")
       (elpy-buffer--replace-block res))))
 
 (defun elpy-importmagic-fixup ()
@@ -2278,13 +2371,24 @@ Also sort the imports in the import statement blocks."
   (interactive)
   ;; get all unresolved names, and interactively add imports for them
   (let* ((res (elpy-rpc "get_unresolved_symbols" (list buffer-file-name
-                                                       (elpy-rpc--buffer-contents)))))
+						       (elpy-rpc--buffer-contents))))
+	 (unresolved-aliases (list)))
     (unless (stringp res)
       (if (null res) (message "No imports to add."))
       (dolist (object res)
         (let* ((prompt (format "How to import \"%s\": " object))
-               (choice (elpy-importmagic--add-import-read-args object prompt)))
-          (elpy-importmagic-add-import (car choice))))))
+               (choice (elpy-importmagic--add-import-read-args object prompt nil)))
+	  (when (equal choice "")
+	    (push (car (split-string object "\\.")) unresolved-aliases))
+	  (elpy-importmagic-add-import choice nil))))
+    ;; ask for unresolved aliases real names and add import for them
+    (dolist (alias unresolved-aliases)
+      (let* ((object (read-string (format "Real name of \"%s\" alias: " alias nil)))
+	     (prompt (format "How to import \"%s\": " object))
+	     (choice (concat
+		      (elpy-importmagic--add-import-read-args object prompt nil)
+		      (concat " as " alias))))
+	(elpy-importmagic-add-import choice nil))))
   ;; now get a new import statement block (this also sorts)
   (let* ((res (elpy-rpc "remove_unreferenced_imports" (list buffer-file-name
                                                             (elpy-rpc--buffer-contents)))))
@@ -3316,7 +3420,13 @@ If you need your modeline, you can set the variable `elpy-remove-modeline-lighte
                       (delq 'company-ropemacs
                             (delq 'company-capf
                                   (mapcar #'identity company-backends))))))
-     (company-mode 1))
+     (company-mode 1)
+     (when (> (buffer-size) elpy-rpc-ignored-buffer-size)
+       (message
+	(format
+	 (concat "Buffer larger than elpy-rpc-ignored-buffer-size (%d)."
+		 " Elpy will turn off completion.")
+	 elpy-rpc-ignored-buffer-size))))
     (`buffer-stop
      (company-mode -1)
      (kill-local-variable 'company-idle-delay)
@@ -3357,8 +3467,8 @@ here, and return the \"name\" as used by the backend."
   "Store RESULT in the candidate cache and return candidates."
   (elpy-company--cache-clear)
   (mapcar (lambda (completion)
-            (let* ((suffix (cdr (assq 'suffix completion)))
-                   (name (concat prefix suffix)))
+            (let* ((suffix (cdr (assq 'name completion)))
+                   (name (concat (s-chop-suffix (company-grab-symbol) prefix) suffix)))
               (puthash name completion elpy-company--cache)
               name))
           result))
@@ -3690,13 +3800,6 @@ description."
                    err-info
                    ", ")))))
 
-(defun elpy-flymake--standard-value (var)
-  "Return the standard value of the given variable."
-  (let ((sv (get var 'standard-value)))
-    (when (consp sv)
-      (ignore-errors
-        (eval (car sv))))))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Module: Highlight Indentation
 
@@ -3753,6 +3856,17 @@ description."
      (yas-minor-mode 1))
     (`buffer-stop
      (yas-minor-mode -1))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Module: Elpy-Django
+
+(defun elpy-module-django (command &rest args)
+  "Module to provide Django support."
+  (pcase command
+    (`buffer-init
+     (elpy-django-setup))
+    (`buffer-stop
+     (elpy-django -1))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Backwards compatibility
@@ -3865,6 +3979,16 @@ which we're looking."
            highlight-indent-active)
       (highlight-indentation)))))
 
+;; https://debbugs.gnu.org/cgi/bugreport.cgi?bug=25753#44
+(when (version< emacs-version "25.2")
+  (defun python-shell-completion-native-try ()
+    "Return non-nil if can trigger native completion."
+    (let ((python-shell-completion-native-enable t)
+          (python-shell-completion-native-output-timeout
+           python-shell-completion-native-try-output-timeout))
+      (python-shell-completion-native-get-completions
+       (get-buffer-process (current-buffer))
+       nil "_"))))
 
 (provide 'elpy)
 ;;; elpy.el ends here

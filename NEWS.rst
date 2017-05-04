@@ -1,3 +1,33 @@
+New in Elpy 1.15.0
+==================
+
+- Elpy now supports profiling, try ``elpy-profile-buffer-or-region``!
+- Do not randomly downcase completion candidates anymore.
+- Work around a bug in Emacs 25.1 and before related to current
+  IPython shells.
+- And lots of other bugfixes.
+
+
+New in Elpy 1.14.0
+==================
+
+- Basic Django support. Try ``C-c C-x c`` and ``C-c C-x r``! Thanks to
+  Daniel Gopar for this.
+- You can now use manage.py to run Django tests, instead of always
+  using django-admin.py.
+- When called with a prefix argument ``elpy-importmagic-add-import``
+  will now ask for an alias name to import as.
+
+
+New in Elpy 1.13.0
+==================
+
+- Fewer surprises with syntax checks, ``C-c C-z``, reformatting
+- Improved behavior for reformatting.
+- Improved documentation for IPython. IPython 5 broke a lot of things
+  with Emacs. Use it at your own risk.
+
+
 New in Elpy 1.12.0
 ==================
 
