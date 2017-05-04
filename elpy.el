@@ -2001,7 +2001,9 @@ directory is not nil."
       (progn
         (save-some-buffers)
         (list (elpy-library-root) nil nil nil))
-    (let* ((top (elpy-library-root))
+    (let* ((top (if elpy-test-django-with-manage
+                    (elpy-project-root)
+                  (elpy-library-root)))
            (file buffer-file-name)
            (module (elpy-test--module-name-for-file top file))
            (test (elpy-test--current-test-name)))
